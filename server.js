@@ -25,7 +25,7 @@ app.get("/api/cells/:sheetId", async (req, res) => {
     conn = await pool.getConnection();
     const rows = await conn.query(
       "SELECT sheet_id, row_id, col_id, cell_value FROM cells WHERE sheet_id = ?",
-      [req.params.sheetId]
+      [req.params.sheetId],
     );
 
     const cells = [];
@@ -62,17 +62,28 @@ app.get("/api/sheets/latestId", async (req, res) => {
 
 // POST: Update or Insert a cell
 app.post("/api/cells/saveCells", async (req, res) => {
+  console.log("save request recieved");
+
   const { cells } = req.body;
 
   if (!cells || cells.length === 0) return res.sendStatus(400);
   const sheetId = cells[0]["sheet_id"];
-  const values = cells.map((c) => [
-    c.sheet_id,
-    c.row_index,
-    c.col_index,
-    c.content,
-  ]);
 
+  const foundColumns = {};
+  const columns = [];
+
+  const values = cells.map((c) => {
+    
+    if (!foundColumns[c.col_index]) {
+      foundColumns[c.col_index] = true;
+      columns.push([c.col_index, c.sheet_id]);
+    }
+
+    return [c.sheet_id, c.row_index, c.col_index, c.content];
+  });
+
+  console.log("save request recieved");
+  console.log(values);
   let conn;
   try {
     conn = await pool.getConnection();
@@ -85,6 +96,13 @@ app.post("/api/cells/saveCells", async (req, res) => {
             VALUES (?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE cell_value = VALUES(cell_value)`;
     await conn.batch(query, values);
+
+    const columnQuery = `
+          INSERT IGNORE INTO columns (id, sheet_id)
+          VALUES (?, ?)
+          `;
+    await conn.batch(columnQuery, columns)
+
     res.sendStatus(200);
   } catch (err) {
     res.status(500).send(err);
@@ -105,7 +123,7 @@ app.post("/api/updateName", async (req, res) => {
   if (!allowedTables.includes(tableName)) {
     // Log the attempt for security monitoring
     console.warn(
-      `Security Alert: Unauthorized table access attempt: ${tableName}`
+      `Security Alert: Unauthorized table access attempt: ${tableName}`,
     );
     return res.status(403).json({ error: "Invalid table name" });
   }
@@ -139,7 +157,7 @@ app.get("/api/db", async (req, res) => {
             
         FROM sheets
             INNER JOIN columns ON columns.sheet_id = sheets.id
-        `
+        `,
     );
 
     const rowCounts = await conn.query(
@@ -153,7 +171,7 @@ app.get("/api/db", async (req, res) => {
             ,col_id
         )
         SELECT sheet_id, MAX(row_count) AS row_count FROM count GROUP BY sheet_id
-        `
+        `,
     );
 
     console.log(`Found ${rows.length} columns across all tables.`);
@@ -162,8 +180,8 @@ app.get("/api/db", async (req, res) => {
     const sheets = {};
     const counts = {};
     rowCounts.forEach((count) => {
-        counts[count.sheet_id] = Number(count.row_count);
-    })
+      counts[count.sheet_id] = Number(count.row_count);
+    });
     for (const row of rows) {
       if (!sheets[row.sheet_id])
         sheets[row.sheet_id] = {
@@ -182,11 +200,11 @@ app.get("/api/db", async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     if (conn) {
-        conn.release();
+      conn.release();
     }
   }
 });
 
 app.listen(process.env.PORT, () =>
-  console.log("Backend running on localhost:" + process.env.PORT)
+  console.log("Backend running on localhost:" + process.env.PORT),
 );
