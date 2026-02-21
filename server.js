@@ -23,22 +23,29 @@ app.get("/api/cells/:sheetId", async (req, res) => {
   let conn;
   try {
     conn = await pool.getConnection();
-    const rows = await conn.query(
+    const data = await conn.query(
       "SELECT sheet_id, row_id, col_id, cell_value FROM cells WHERE sheet_id = ?",
       [req.params.sheetId],
     );
+    console.log(data)
+    const sheet = [];
 
-    const cells = [];
+    data.forEach((row) => {
+      if (!sheet[row.row_id - 1]) sheet[row.row_id - 1] = {}
+      
+      sheet[row.row_id - 1][row.col_id] = {value: row.cell_value}
+    })
+    console.log(sheet);
 
-    rows.forEach((row) => {
-      cells.push({
-        id: row.sheet_id + "-" + row.row_id + "-" + row.col_id,
-        value: row.cell_value,
-      });
-    });
+    // rows.forEach((row) => {
+    //   cells.push({
+    //     id: row.sheet_id + "-" + row.row_id + "-" + row.col_id,
+    //     value: row.cell_value,
+    //   });
+    // });
 
-    console.log(cells);
-    res.json(cells);
+    console.log(sheet);
+    res.json(sheet);
   } catch (err) {
     res.status(500).send(err);
   } finally {
