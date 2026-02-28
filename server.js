@@ -1,12 +1,12 @@
 const express = require("express");
 const mariadb = require("mariadb");
 const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-require("dotenv").config();
 // Database Connection Pool
 const pool = mariadb.createPool({
   host: process.env.DB_HOST,
@@ -24,25 +24,34 @@ app.get("/api/cells/:sheetId", async (req, res) => {
   try {
     conn = await pool.getConnection();
     const data = await conn.query(
-      "SELECT sheet_id, row_id, col_id, cell_value FROM cells WHERE sheet_id = ?",
+      `SELECT 
+        sheet_id
+        ,row_id
+        ,col_id
+        ,cell_value 
+      FROM cells 
+      WHERE sheet_id = ?
+      ORDER BY
+        row_id
+        ,col_id`,
       [req.params.sheetId],
     );
-    console.log(data)
+
+    console.log(data);
     const sheet = [];
 
     data.forEach((row) => {
-      if (!sheet[row.row_id - 1]) sheet[row.row_id - 1] = {}
-      
-      sheet[row.row_id - 1][row.col_id] = {value: row.cell_value}
-    })
-    console.log(sheet);
+      if (!sheet[row.row_id - 1]) sheet[row.row_id - 1] = {};
+      sheet[row.row_id - 1][row.col_id -1] = { 
+        value: row.cell_value, 
+        row: row.row_id - 1, 
+        col: row.col_id - 1, 
+        sheet_id: row.sheet_id,
+        isDirty: false,
+      };
+    });
 
-    // rows.forEach((row) => {
-    //   cells.push({
-    //     id: row.sheet_id + "-" + row.row_id + "-" + row.col_id,
-    //     value: row.cell_value,
-    //   });
-    // });
+    console.log(sheet);
 
     console.log(sheet);
     res.json(sheet);
@@ -74,13 +83,15 @@ app.post("/api/cells/saveCells", async (req, res) => {
   const { cells } = req.body;
 
   if (!cells || cells.length === 0) return res.sendStatus(400);
+
   const sheetId = cells[0]["sheet_id"];
 
   const foundColumns = {};
+
   const columns = [];
 
   const values = cells.map((c) => {
-    
+
     if (!foundColumns[c.col_index]) {
       foundColumns[c.col_index] = true;
       columns.push([c.col_index, c.sheet_id]);
@@ -108,7 +119,7 @@ app.post("/api/cells/saveCells", async (req, res) => {
           INSERT IGNORE INTO columns (id, sheet_id)
           VALUES (?, ?)
           `;
-    await conn.batch(columnQuery, columns)
+    await conn.batch(columnQuery, columns);
 
     res.sendStatus(200);
   } catch (err) {
@@ -183,25 +194,28 @@ app.get("/api/db", async (req, res) => {
 
     console.log(`Found ${rows.length} columns across all tables.`);
     console.log(rowCounts);
-    console.log(rows);
     const sheets = {};
     const counts = {};
     rowCounts.forEach((count) => {
       counts[count.sheet_id] = Number(count.row_count);
     });
-    for (const row of rows) {
-      if (!sheets[row.sheet_id])
+    console.log("rows..");
+    console.log(rows);
+    const cols = {};
+    rows.forEach((row, index) => {
+      if (!sheets[row.sheet_id]) {
         sheets[row.sheet_id] = {
           id: row.sheet_id,
           name: row.sheet_name,
           cols: [],
           row_count: counts[row.sheet_id],
         };
-
+      }
       const sheetCol = { id: row.column_id, name: row.column_name };
       sheets[row.sheet_id]["cols"].push(sheetCol);
-    }
+    });
     console.log(sheets);
+    console.log("*** !!!OK!!! ***");
     res.json(sheets); // This is the response.data Pinia receives
   } catch (err) {
     res.status(500).json({ error: err.message });
