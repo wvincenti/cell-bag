@@ -41,11 +41,11 @@ app.get("/api/cells/:sheetId", async (req, res) => {
     const sheet = [];
 
     data.forEach((row) => {
-      if (!sheet[row.row_id - 1]) sheet[row.row_id - 1] = {};
-      sheet[row.row_id - 1][row.col_id -1] = { 
+      if (!sheet[row.row_id]) sheet[row.row_id] = {};
+      sheet[row.row_id][row.col_id] = { 
         value: row.cell_value, 
-        row: row.row_id - 1, 
-        col: row.col_id - 1, 
+        row: row.row_id, 
+        col: row.col_id , 
         sheet_id: row.sheet_id,
         isDirty: false,
       };
@@ -80,7 +80,10 @@ app.get("/api/sheets/latestId", async (req, res) => {
 app.post("/api/cells/saveCells", async (req, res) => {
   console.log("save request recieved");
 
+  console.log(req.body);
+
   const { cells } = req.body;
+  console.log(cells);
 
   if (!cells || cells.length === 0) return res.sendStatus(400);
 
@@ -128,6 +131,34 @@ app.post("/api/cells/saveCells", async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+app.post("/api/deleteSheet", async(req, res) => {
+  let {sheet_id} = req.body;
+  sheet_id = Number(sheet_id);
+  if (!sheet_id) return res.status(400).send('Missing sheet id');
+  console.log(sheet_id);
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    await conn.beginTransaction();
+
+    await conn.query("DELETE FROM Cells WHERE sheet_id = ?", [sheet_id]);
+
+    await conn.query("DELETE FROM Sheets WHERE id = ?", [sheet_id]);
+
+    await conn.commit();
+
+    res.status(200).json({ success: true, deleted: sheet_id });
+
+  } catch(err) {
+    if (conn) await conn.rollback();
+    res.status(500).send(err)
+  } finally {
+    if (conn) conn.release();
+  }
+})
 
 app.post("/api/updateName", async (req, res) => {
   const sheetId = req.body.sheet_id;
