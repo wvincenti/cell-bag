@@ -1,0 +1,7 @@
+{
+  "language": "mariadb",
+  "uppercase": true,
+  "indentStyle": "tabularRight",
+  "logicalOperatorNewline": "before",
+  "expressionWidth": 60
+}
