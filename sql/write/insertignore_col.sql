@@ -1,2 +1,2 @@
-INSERT IGNORE INTO cols (sheet_id, id)
+INSERT IGNORE INTO cols (sheet_id, index, name)
 VALUES (?, ?);

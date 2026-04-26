@@ -1,8 +1,8 @@
 const express = require("express");
+const dns = require("dns/promises");
 
 const mariadb = require("mariadb");
 const cors = require("cors");
-const queries = require("./dbUtils");
 
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
@@ -11,6 +11,8 @@ const session = require("express-session");
 const FileStore = require("session-file-store")(session);
 
 require("dotenv").config();
+const { queries, isEmailDomainValid, withTransaction } = require("./dbUtils");
+
 
 const app = express();
 
@@ -22,23 +24,22 @@ app.use(
 );
 
 app.use(express.json());
-
-const dynamicSecret = crypto.randomBytes(32).toString("hex");
-
-console.log(
-  `[Server] Booting up with Secret Key: ${dynamicSecret.substring(0, 8)}...`,
-);
+console.log("session SECRET: " + process.env.SESSION_SECRET);
+// const dynamicSecret = crypto.randomBytes(32).toString("hex");
+// console.log(
+//   `[Server] Booting up with Secret Key: ${dynamicSecret.substring(0, 8)}...`,
+// );
 
 app.use(
   session({
     // Using our freshly minted key
-    secret: dynamicSecret,
+    secret: process.env.SESSION_SECRET,
 
-    // store: new FileStore({
-    //   path: "./sessions",
-    //   // Optional: clear expired sessions on boot
-    //   reapInterval: 3600,
-    // }),
+    store: new FileStore({
+      path: "./sessions",
+      // Optional: clear expired sessions on boot
+      reapInterval: 3600,
+    }),
 
     resave: false,
     saveUninitialized: false,
@@ -46,7 +47,7 @@ app.use(
       maxAge: 1000 * 60 * 60 * 24, // 24 hours
       httpOnly: true,
       secure: false, // Set to true if you move to HTTPS!
-      sameSite: 'lax',
+      sameSite: "lax",
     },
   }),
 );
@@ -55,12 +56,12 @@ app.use(
 app.use((req, res, next) => {
   // List of routes that DON'T need a login (whitelist)
   console.log(req.path);
+
   const publicRoutes = ["/api/login", "/api/register", "/api/public"];
 
   if (publicRoutes.includes(req.path)) {
     return next(); // Let them through to the login page!
   }
-
   // Check the session file for the user_id
   if (req.session.user_id) {
     console.log(`User ${req.session.user_id} is authenticated.`);
@@ -71,23 +72,13 @@ app.use((req, res, next) => {
   }
 });
 
-// Database Connection Pool
-const pool = mariadb.createPool({
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  connectionLimit: 5,
-});
-
 app.get("/api/session", (req, res) => {
-  console.log('SESSION')
+  console.log("SESSION");
   console.log(req.session);
-  if (req.session.user) {
+  if (req.session.user_id) {
     res.json({
-      authenticated: true,
-      user: req.session.user,
+      isAuthenticated: true,
+      user_id: req.session.user_id,
     });
   } else {
     res.json({ authenticated: false });
@@ -98,20 +89,30 @@ app.get("/api/session", (req, res) => {
 app.get("/api/cells/:sheetId", async (req, res) => {
   console.log("request recieved");
   withTransaction(res, async (conn) => {
-    const data = await conn.query(queries.sheetCells, req.params.sheetId);
-    console.log(data);
-    const sheet = [];
 
-    data.forEach((row) => {
-      if (!sheet[row.row_id]) sheet[row.row_id] = {};
+    const data = await conn.query(queries.sheetCells, [req.params.sheetId, req.session.user_id]);
+    console.log(data);
+
+    if (data.length == 0) {
+      res.status(404).send("No sheet found");
+      return;
+    }
+
+    const sheet = {id: req.params.sheetId, rows: []};
+
+    data.forEach((cell, idx) => {
+      
+      if (!sheet[row.row_id]) sheet.rows[row.row_id] = {};
 
       sheet[row.row_id][row.col_id] = {
         value: row.cell_value,
-        row: row.row_id,
+        //row: row.row_id,
         col: row.col_id,
-        sheet_id: row.sheet_id,
+        //sheet_id: row.sheet_id,
         isDirty: false,
+
       };
+
     });
 
     console.log(sheet);
@@ -188,39 +189,44 @@ app.get("/api/db", async (req, res) => {
 // ** SIGN UP **
 app.post("/api/register", async (req, res) => {
   try {
-    console.log("ress");
+
     let { email, username, password } = req.body;
 
-    if (!username) username = email;
+    if (!email.includes('@')) return res.status(400).json({
+      message: `Invalid email format for email: ${email}`
+    });
+
+    const isValidDomain = await isEmailDomainValid(email);
+
+    console.log("Email domain valid: "+isValidDomain)
+
+    if (!isValidDomain) return res.status(400).send(`${email} doesn't seem to exist`);
+
+    username = username || email;
+
     const saltRounds = 10;
+
     const hash = await bcrypt.hash(password, saltRounds);
 
-    const rows = withTransaction(res, async (conn) => {
-      await conn.query(
+    const dbRes = await withTransaction(res, async (conn) => {
+      
+      const sqlRes = await conn.query(
         "INSERT INTO users (email, username, password_hash) VALUES (?, ?, ?)",
         [email, username, hash],
       );
 
-      // LOGIN NEW USER
-      const r = await conn.query("SELECT * FROM users WHERE email = ?", [
-        email,
-      ]);
-      return r;
+      console.log("sql response:");
+      console.log(sqlRes);
+
+      return sqlRes;
     });
 
-    const user = rows[0];
-    console.log(user);
+    console.log(dbResponse);
+    const userId = Number(dbResponse);
 
-    // Compare the login password with the hash in the DB
-    const match = await bcrypt.compare(password, user.password_hash);
-
-    if (match) {
-      // SAVE TO SIGNED COOKIE SESSION
-      req.session.user_id = user.id;
-      return res.send("Logged in!");
-    }
-
-    res.status(401).send("Invalid email or password.");
+    // SAVE TO SIGNED COOKIE SESSION
+    req.session.user_id = userId;
+    return res.send("Logged in!");
   } catch (ex) {
     console.log(ex);
   }
@@ -232,13 +238,14 @@ app.post("/api/login", async (req, res) => {
 
   const { email, password } = req.body;
 
-  const rows = await withTransaction(res, async (conn) => {
-    return await conn.query("SELECT * FROM users WHERE email = ?", [email]);
-  });
-
-  console.log(rows);
-
   try {
+    const rows = await withTransaction(res, async (conn) => {
+      const user = await conn.query("SELECT * FROM users WHERE email = ?", [
+        email,
+      ]);
+      return user;
+    });
+    console.log(rows);
     if (rows.length > 0) {
       const user = rows[0];
       // Compare the login password with the hash in the DB
@@ -247,9 +254,12 @@ app.post("/api/login", async (req, res) => {
       if (match) {
         // SAVE TO SIGNED COOKIE SESSION
         console.log(req.session);
-        req.session.user_id = user.id;
+        req.session.user_id = Number(user.id);
         console.log(req.session);
-        return res.send("Logged in!");
+        return res.send({
+          message: "Logged in!",
+          user_id: req.session.user_id,
+        });
       }
 
       res.status(401).send("Invalid email or password.");
@@ -257,6 +267,14 @@ app.post("/api/login", async (req, res) => {
   } catch (err) {
     res.status(500).send(err.message);
   }
+});
+
+app.get("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).send("Could not log out");
+    res.clearCookie("connect.sid"); // Clear the session cookie
+    return res.status(200).send("OK");
+  });
 });
 
 // POST: Update or Insert a cell
@@ -307,7 +325,7 @@ app.post("/api/cells/saveCells", async (req, res) => {
 
     await conn.batch(
       "INSERT IGNORE INTO sheet_rows (sheet_id, id) VALUES (?, ?)",
-      rows,
+      [sheetId, rows],
     );
 
     await conn.batch(queries.insertIgnoreCol, columns);
@@ -382,34 +400,3 @@ app.post("/api/updateName", async (req, res) => {
 app.listen(process.env.PORT, () =>
   console.log("Backend running on localhost:" + process.env.PORT),
 );
-
-/**
- * Higher-order function to handle DB transactions safely.
- * @param {Function} action - The async logic to run inside the transaction.
- * @param {Object} res - The Express response object to handle errors.
- */
-
-async function withTransaction(res, action) {
-  let conn;
-  try {
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    // Run the actual logic and pass the connection to it
-    const result = await action(conn);
-
-    await conn.commit();
-    return result;
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error("Database Error:", err);
-
-    // Centralized error response
-    res
-      .status(500)
-      .json({ error: "Database Transaction Failed", details: err.message });
-    throw err; // Re-throw so the route knows it failed
-  } finally {
-    if (conn) conn.release();
-  }
-}
