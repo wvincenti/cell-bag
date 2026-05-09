@@ -22,13 +22,16 @@ const queries = {
   // READ
   readCells: readQuery("sql/read", "sheet_cells.sql"),
   readSheets: readQuery("sql/read", "sheets.sql"),
+  checkSheetWritePermission: readQuery("sql/read", "check_sheet_write_permission.sql")
   // WRITE
-  insertIgnoreSheet: readQuery("sql/write", "insertignore_sheet.sql"),
-  insertIgnoreCol: readQuery("sql/write", "insertignore_col.sql"),
-  upsertSheetRows: readQuery("sql/write", "upsert_sheet_rows.sql"),
+  insertSheet: readQuery("sql/write", "insert_sheet.sql"),
+  upsertSheetCols: readQuery("sql/write", "upsert_sheet_cols.sql"),
+  insertIgnoreSheetRows: readQuery("sql/write", "insertignore_sheet_rows.sql"),
   upsertUserSheet: readQuery("sql/write", "upsert_user_sheet.sql"),
   upsertCells: readQuery("sql/write", "upsert_cells.sql"),
-  upsert_cellvalues: readQuery("sql/write", "upsert_cell_values.sql"),
+  upsertCellValues: readQuery("sql/write", "upsert_cell_values.sql"),
+
+  updateSheet: readQuery("sql/write", 'update_sheet.sql'),
 };
 
 module.exports = {

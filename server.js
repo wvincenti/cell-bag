@@ -13,7 +13,6 @@ const FileStore = require("session-file-store")(session);
 require("dotenv").config();
 const { queries, isEmailDomainValid, withTransaction } = require("./dbUtils");
 
-
 const app = express();
 
 app.use(
@@ -89,8 +88,10 @@ app.get("/api/session", (req, res) => {
 app.get("/api/cells/:sheetId", async (req, res) => {
   console.log("request recieved");
   withTransaction(res, async (conn) => {
-
-    const data = await conn.query(queries.sheetCells, [req.params.sheetId, req.session.user_id]);
+    const data = await conn.query(queries.sheetCells, [
+      req.params.sheetId,
+      req.session.user_id,
+    ]);
     console.log(data);
 
     if (data.length == 0) {
@@ -98,10 +99,9 @@ app.get("/api/cells/:sheetId", async (req, res) => {
       return;
     }
 
-    const sheet = {id: req.params.sheetId, rows: []};
+    const sheet = { id: req.params.sheetId, rows: [] };
 
     data.forEach((cell, idx) => {
-      
       if (!sheet[row.row_id]) sheet.rows[row.row_id] = {};
 
       sheet[row.row_id][row.col_id] = {
@@ -110,9 +110,7 @@ app.get("/api/cells/:sheetId", async (req, res) => {
         col: row.col_id,
         //sheet_id: row.sheet_id,
         isDirty: false,
-
       };
-
     });
 
     console.log(sheet);
@@ -143,7 +141,9 @@ app.get("/api/db", async (req, res) => {
 
     console.log("rows..");
     console.log(rows);
+
     const cols = {};
+
     rows.forEach((row, index) => {
       if (!sheets[row.sheet_id.ToString()]) {
         sheets[row.sheet_id] = {
@@ -153,7 +153,9 @@ app.get("/api/db", async (req, res) => {
           row_count: counts[row.sheet_id.ToString()],
         };
       }
+
       const sheetCol = { id: row.column_id, name: row.column_name };
+
       sheets[row.sheet_id.ToString()]["cols"].push(sheetCol);
     });
 
@@ -163,44 +165,24 @@ app.get("/api/db", async (req, res) => {
   });
 
   res.json(sheets); // This is the response.data Pinia receives
-
-  // const rowCounts = await conn.query(
-  //   `WITH count AS (
-  //     SELECT
-  //         sheet_id
-  //         ,COUNT(row_id) AS row_count
-  //     FROM cells
-  //     GROUP BY
-  //         sheet_id
-  //         ,col_id
-  //     )
-  //     SELECT sheet_id, MAX(row_count) AS row_count FROM count GROUP BY sheet_id
-  //     `,
-  // );
-  //   console.log(`Found ${rows.length} columns across all tables.`);
-  // console.log(rowCounts);
-  // const sheets = {};
-  // const counts = {};
-  // rowCounts.forEach((count) => {
-  //   counts[count.sheet_id] = Number(count.row_count);
-  // });
 });
 
 // ** SIGN UP **
 app.post("/api/register", async (req, res) => {
   try {
-
     let { email, username, password } = req.body;
 
-    if (!email.includes('@')) return res.status(400).json({
-      message: `Invalid email format for email: ${email}`
-    });
+    if (!email.includes("@"))
+      return res.status(400).json({
+        message: `Invalid email format for email: ${email}`,
+      });
 
     const isValidDomain = await isEmailDomainValid(email);
 
-    console.log("Email domain valid: "+isValidDomain)
+    console.log("Email domain valid: " + isValidDomain);
 
-    if (!isValidDomain) return res.status(400).send(`${email} doesn't seem to exist`);
+    if (!isValidDomain)
+      return res.status(400).send(`${email} doesn't seem to exist`);
 
     username = username || email;
 
@@ -209,7 +191,6 @@ app.post("/api/register", async (req, res) => {
     const hash = await bcrypt.hash(password, saltRounds);
 
     const dbRes = await withTransaction(res, async (conn) => {
-      
       const sqlRes = await conn.query(
         "INSERT INTO users (email, username, password_hash) VALUES (?, ?, ?)",
         [email, username, hash],
@@ -279,59 +260,107 @@ app.get("/api/logout", (req, res) => {
 
 // POST: Update or Insert a cell
 app.post("/api/cells/saveCells", async (req, res) => {
-  console.log("save request recieved");
-  console.log(req.body);
-  const { cells } = req.body;
-  console.log(cells);
+  try {
+    console.log("save request recieved");
+    console.log(req.body);
+    const { cells, sheet_meta, deleted_cells } = req.body;
+    console.log(sheet_meta);
+    console.log(cells);
+    console.log(sheet_meta.cols);
 
-  if (!cells || cells.length === 0) return res.sendStatus(400);
+    withTransaction(res, async (conn) => {
+      if (!sheet_meta.id) {
+        const rows = await conn.execute(queries.insertSheet, [
+          sheet_meta.name,
+          sheet_meta.visibility,
+        ]);
 
-  const sheetId = cells[0]["sheet_id"];
+        
 
-  console.log(sheetId);
+        console.log(rows)
+        const id = rows[0].id;
 
-  const foundColumns = {};
-  const columns = [];
+        await conn.execute(queries.upsertUserSheet, [
+          req.session.user_id,
+          id,
+          sheet_meta.permission,
+        ]);
 
-  const foundRows = {};
-  const rows = [];
+        sheet_meta.id = id;
+      } else if (sheet_meta.isDirty) {
+        await conn.execute(queries.updateSheet, [
+          sheet_meta.name,
+          sheet_meta.visibility,
+          sheet_meta.id,
+          req.session.user_id,
+        ]);
+      }
 
-  const values = cells.map((c) => {
-    if (!foundColumns[c.col_id]) {
-      foundColumns[c.col_id] = true;
-      columns.push([c.sheet_id, c.col_id]);
-    }
+      if (sheet_meta.cols.length > 0) {
+        const colValues = sheet_meta.cols.map((col) => {
+          return [sheet_meta.id, col.index, col.name, col.data_type, req.session.user_id, sheet_meta.id];
+        });
 
-    if (!foundRows[c.row_id]) {
-      foundRows[c.row_id] = true;
-      rows.push([c.sheet_id, c.row_id]);
-    }
+        await conn.batch(queries.upsertSheetCols, colValues);
+      }
 
-    return [c.sheet_id, c.row_id, c.col_id, c.display_val, "string"];
-  });
+      if (sheet_meta.rows.length > 0) {
+        const rowValues = sheet_meta.rows.map((rowIdx) => {
+          return [sheet_meta.id, rowIdx];
+        });
 
-  console.log("cols");
-  console.log(columns);
+        await conn.batch(queries.upsertSheetRows, [sheet, sheet_meta.rows]);
+      }
 
-  console.log("sheets");
-  console.log(sheetId);
+      if (cells.length > 0) {
+        const { cellMeta, cellValues } = cells.reduce(
+          (acc, cell) => {
+            acc.cellMeta.push([
+              sheet_meta.id,
+              cell.row_index,
+              cell.col_index,
+              cell.cell_value,
+              req.session.user_id,
+              sheet_meta.id,
+            ]);
 
-  console.log("save request recieved");
-  console.log(values);
+            acc.cellValues.push([
+              sheet_meta.id,
+              cell.row_index,
+              cell.col_index,
+              cell.data_type,
+              cell.data_type,
+              cell.cell_value,
+              cell.data_type,
+              cell.cell_value,
+              cell.data_type,
+              cell.cell_value,
+              cell.data_type,
+              cell.cell_value,
+              cell.data_type,
+              cell.cell_value,
+              cell.data_type,
+              cell.cell_value,
+              req.session.user_id,
+              sheet_meta.id,
+            ]);
+          },
+          { cellMeta: [], cellValues: [] },
+        );
 
-  withTransaction(res, async (conn) => {
-    await conn.execute(queries.insertIgnoreSheet, [sheetId, null]);
-    console.log("ok");
+        await conn.batch(queries.upsertCells, cellMeta);
 
-    await conn.batch(
-      "INSERT IGNORE INTO sheet_rows (sheet_id, id) VALUES (?, ?)",
-      [sheetId, rows],
-    );
+        await conn.batch(queries.upsert_cell_values, cellValues);
+      }
 
-    await conn.batch(queries.insertIgnoreCol, columns);
+      // if (cellsToDelete.length > 0) {
 
-    await conn.batch(queries.upsertCells, values);
-  });
+
+      // }
+    });
+  } catch (ex) {
+    console.log(ex);
+  }
 });
 
 app.post("/api/deleteSheet", async (req, res) => {
