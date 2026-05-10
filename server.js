@@ -275,9 +275,6 @@ app.post("/api/cells/saveCells", async (req, res) => {
           sheet_meta.visibility,
         ]);
 
-        
-
-        console.log(rows)
         const id = rows[0].id;
 
         await conn.execute(queries.upsertUserSheet, [
@@ -296,23 +293,35 @@ app.post("/api/cells/saveCells", async (req, res) => {
         ]);
       }
 
-      if (sheet_meta.cols.length > 0) {
+      const hasPermission = conn.execute(queries.checkSheetWritePermission, [
+        sheet_meta.id,
+        req.session.user_id,
+      ]);
+
+      if (hasPermission && sheet_meta.cols.length > 0) {
         const colValues = sheet_meta.cols.map((col) => {
-          return [sheet_meta.id, col.index, col.name, col.data_type, req.session.user_id, sheet_meta.id];
+          return [
+            sheet_meta.id,
+            col.col_index,
+            col.name,
+            col.data_type,
+            // req.session.user_id,
+            // sheet_meta.id,
+          ];
         });
 
         await conn.batch(queries.upsertSheetCols, colValues);
       }
 
-      if (sheet_meta.rows.length > 0) {
+      if (hasPermission && sheet_meta.rows.length > 0) {
         const rowValues = sheet_meta.rows.map((rowIdx) => {
           return [sheet_meta.id, rowIdx];
         });
 
-        await conn.batch(queries.upsertSheetRows, [sheet, sheet_meta.rows]);
+        await conn.batch(queries.insertIgnoreSheetRows, rowValues);
       }
 
-      if (cells.length > 0) {
+      if (hasPermission && cells.length > 0) {
         const { cellMeta, cellValues } = cells.reduce(
           (acc, cell) => {
             acc.cellMeta.push([
@@ -320,8 +329,8 @@ app.post("/api/cells/saveCells", async (req, res) => {
               cell.row_index,
               cell.col_index,
               cell.cell_value,
-              req.session.user_id,
-              sheet_meta.id,
+              // req.session.user_id,
+              // sheet_meta.id,
             ]);
 
             acc.cellValues.push([
@@ -341,22 +350,35 @@ app.post("/api/cells/saveCells", async (req, res) => {
               cell.cell_value,
               cell.data_type,
               cell.cell_value,
-              req.session.user_id,
-              sheet_meta.id,
+              cell.data_type,
+              cell.cell_value,
             ]);
+
+            return acc;
           },
           { cellMeta: [], cellValues: [] },
         );
 
         await conn.batch(queries.upsertCells, cellMeta);
 
-        await conn.batch(queries.upsert_cell_values, cellValues);
+        await conn.batch(queries.upsertCellValues, cellValues);
       }
 
-      // if (cellsToDelete.length > 0) {
+      if (hasPermission && deleted_cells.length > 0) {
+        const deleteValues = deleted_cells.map((cell) => {
+          return [sheet_meta.id, cell.row_index, cell.col_index];
+        });
 
+        await conn.batch(queries.deleteCellValues, deleteValues);
 
-      // }
+        await conn.batch(queries.deleteCells, deleteValues);
+
+        await conn.execute(queries.deleteEmptyRows, [sheet_meta.id]);
+
+        await conn.execute(queries.deleteEmptyCols, [sheet_meta.id]);
+      }
+
+      return res.status(200).send(Number(sheet_meta.id));
     });
   } catch (ex) {
     console.log(ex);
