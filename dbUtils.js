@@ -22,7 +22,11 @@ const queries = {
   // READ
   readCells: readQuery("sql/read", "sheet_cells.sql"),
   readSheets: readQuery("sql/read", "sheets.sql"),
-  checkSheetWritePermission: readQuery("sql/read", "check_sheet_write_permission.sql"),
+  checkSheetWritePermission: readQuery(
+    "sql/read",
+    "check_sheet_write_permission.sql",
+  ),
+
   // WRITE
   insertSheet: readQuery("sql/write", "insert_sheet.sql"),
   upsertSheetCols: readQuery("sql/write", "upsert_sheet_cols.sql"),
@@ -30,14 +34,14 @@ const queries = {
   upsertUserSheet: readQuery("sql/write", "upsert_user_sheet.sql"),
   upsertCells: readQuery("sql/write", "upsert_cells.sql"),
   upsertCellValues: readQuery("sql/write", "upsert_cell_values.sql"),
-
-  updateSheet: readQuery("sql/write", 'update_sheet.sql'),
+  updateSheet: readQuery("sql/write", "update_sheet.sql"),
 
   // DELETE
   deleteCellValues: readQuery("sql/delete", "delete_cell_values.sql"),
   deleteCells: readQuery("sql/delete", "delete_cells.sql"),
   deleteEmptyRows: readQuery("sql/delete", "delete_empty_rows.sql"),
-  deleteEmptyCols: readQuery("sql/delete", "delete_empty_cols.sql")
+  deleteEmptyCols: readQuery("sql/delete", "delete_empty_cols.sql"),
+  deleteSheet: readQuery("sql/delete", "delete_sheet.sql"),
 };
 
 module.exports = {
@@ -78,7 +82,13 @@ module.exports = {
       console.error("Database Error:", err);
       throw err; // Re-throw so the route knows it failed
     } finally {
-      if (conn) conn.release();
+      if (conn) {
+        try {
+          await conn.release();
+        } catch (releaseErr) {
+          console.error("Pool release failed: ", releaseErr);
+        }
+      }
     }
   },
 };

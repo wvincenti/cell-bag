@@ -12,6 +12,7 @@ const FileStore = require("session-file-store")(session);
 
 require("dotenv").config();
 const { queries, isEmailDomainValid, withTransaction } = require("./dbUtils");
+const { permission } = require("process");
 
 const app = express();
 
@@ -118,50 +119,38 @@ app.get("/api/cells/:sheetId", async (req, res) => {
   });
 });
 
-app.get("/api/sheets/latestId", async (req, res) => {
-  withTransaction(res, async (conn) => {
-    conn = await pool.getConnection();
-
-    const rows = await conn.query("SELECT MAX(id) AS id FROM sheets");
-
-    const id = rows.length > 0 ? rows[0].id : 0;
-    console.log(id);
-
-    res.send(id.toString());
-  });
-});
-
 app.get("/api/db", async (req, res) => {
   console.log("read sheets request recieved");
   const sheets = await withTransaction(res, async (conn) => {
-    const rows = await conn.execute(queries.readSheets);
+    const dbRows = await conn.execute(queries.readSheets, req.session.user_id);
 
-    const sheets = {};
-    const counts = {};
+    return dbRows.reduce((acc, row) => {
+      let sheet = acc.find((s) => s.id == row.sheet_id);
 
-    console.log("rows..");
-    console.log(rows);
-
-    const cols = {};
-
-    rows.forEach((row, index) => {
-      if (!sheets[row.sheet_id.ToString()]) {
-        sheets[row.sheet_id] = {
-          id: row.sheet_id.ToString(),
+      if (!sheet) {
+        sheet = {
+          id: Number(row.sheet_id),
           name: row.sheet_name,
-          cols: [],
-          row_count: counts[row.sheet_id.ToString()],
+          index: null,
+          permission: row.permission,
+          visibility: row.visibility,
+          isDirty: false,
+          cols: []
         };
+        acc.push(sheet);
       }
 
-      const sheetCol = { id: row.column_id, name: row.column_name };
+      sheet.cols.push({
+        name: row.column_name,
+        col_index: row.column_index,
+        data_type: row.data_type,
+        isDirty: false,
+        isNew: false,
+      })
 
-      sheets[row.sheet_id.ToString()]["cols"].push(sheetCol);
-    });
+      return acc;
+    }, []);
 
-    console.log(sheets);
-    console.log("*** !!!OK!!! ***");
-    return sheets;
   });
 
   res.json(sheets); // This is the response.data Pinia receives
@@ -382,33 +371,29 @@ app.post("/api/cells/saveCells", async (req, res) => {
     });
   } catch (ex) {
     console.log(ex);
+    return res.status(500).send("Error processing the request");
   }
 });
 
 app.post("/api/deleteSheet", async (req, res) => {
-  let { sheet_id } = req.body;
-  sheet_id = Number(sheet_id);
-  if (!sheet_id) return res.status(400).send("Missing sheet id");
-  console.log(sheet_id);
-  let conn;
 
   try {
-    conn = await pool.getConnection();
 
-    await conn.beginTransaction();
+    let { sheet_id } = req.body;
 
-    await conn.query("DELETE FROM Cells WHERE sheet_id = ?", [sheet_id]);
+    sheet_id = Number(sheet_id);
 
-    await conn.query("DELETE FROM Sheets WHERE id = ?", [sheet_id]);
+    if (!sheet_id) return res.status(400).send("Missing sheet id");
 
-    await conn.commit();
+    console.log(sheet_id);
 
-    res.status(200).json({ success: true, deleted: sheet_id });
-  } catch (err) {
-    if (conn) await conn.rollback();
-    res.status(500).send(err);
-  } finally {
-    if (conn) conn.release();
+    withTransaction(res, async (conn) => {
+      await conn.execute(queries.deleteSheet, [sheet_id]);
+    });
+
+  } catch (ex) {
+    console.log(ex);
+    return res.status(500).send("Error processing the request");
   }
 });
 
