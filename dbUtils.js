@@ -22,18 +22,25 @@ const queries = {
   // READ
   readCells: readQuery("sql/read", "sheet_cells.sql"),
   readSheets: readQuery("sql/read", "sheets.sql"),
+  readUserSheet: readQuery("sql/read", "user_sheet.sql"),
   checkSheetWritePermission: readQuery(
     "sql/read",
     "check_sheet_write_permission.sql",
+  ),
+  checkSheetReadPermission: readQuery(
+    "sql/read",
+    "check_sheet_read_permission.sql",
   ),
 
   // WRITE
   insertSheet: readQuery("sql/write", "insert_sheet.sql"),
   upsertSheetCols: readQuery("sql/write", "upsert_sheet_cols.sql"),
   insertIgnoreSheetRows: readQuery("sql/write", "insertignore_sheet_rows.sql"),
+
   upsertUserSheet: readQuery("sql/write", "upsert_user_sheet.sql"),
   upsertCells: readQuery("sql/write", "upsert_cells.sql"),
   upsertCellValues: readQuery("sql/write", "upsert_cell_values.sql"),
+
   updateSheet: readQuery("sql/write", "update_sheet.sql"),
 
   // DELETE
@@ -90,5 +97,35 @@ module.exports = {
         }
       }
     }
+  },
+
+  createSheetMeta(dbRows) {
+    return dbRows.reduce((acc, row) => {
+      let sheet = acc.find((s) => s.id == row.sheet_id);
+
+      if (!sheet) {
+        sheet = {
+          id: Number(row.sheet_id),
+          name: row.sheet_name,
+          index: null,
+          permission: row.permission,
+          visibility: row.visibility,
+          updated_at: row.updated_at,
+          isDirty: false,
+          cols: [],
+        };
+        acc.push(sheet);
+      }
+
+      sheet.cols.push({
+        name: row.column_name,
+        col_index: row.column_index,
+        data_type: row.data_type,
+        isDirty: false,
+        isNew: false,
+      });
+
+      return acc;
+    }, []);
   },
 };

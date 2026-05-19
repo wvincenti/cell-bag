@@ -11,7 +11,12 @@ const session = require("express-session");
 const FileStore = require("session-file-store")(session);
 
 require("dotenv").config();
-const { queries, isEmailDomainValid, withTransaction } = require("./dbUtils");
+const {
+  queries,
+  isEmailDomainValid,
+  withTransaction,
+  createSheetMeta,
+} = require("./dbUtils");
 const { permission } = require("process");
 
 const app = express();
@@ -81,77 +86,61 @@ app.get("/api/session", (req, res) => {
       user_id: req.session.user_id,
     });
   } else {
-    res.json({ authenticated: false });
+    res.json({ isAuthenticated: false });
   }
 });
 
 // GET: Fetch all cells for a specific sheet
 app.get("/api/cells/:sheetId", async (req, res) => {
   console.log("request recieved");
-  withTransaction(res, async (conn) => {
-    const data = await conn.query(queries.sheetCells, [
+
+  let sheetData;
+  let cellData;
+
+  await withTransaction(res, async (conn) => {
+    const hasPermission = await conn.execute(queries.checkSheetReadPermission, [
       req.params.sheetId,
       req.session.user_id,
     ]);
-    console.log(data);
 
-    if (data.length == 0) {
-      res.status(404).send("No sheet found");
-      return;
+    if (hasPermission) {
+      //sheetData = await conn.execute(queries.readUserSheet, req.params.sheetId);
+      cellData = await conn.execute(queries.readCells, req.params.sheetId);
+    } else {
+      return res
+        .staus(403)
+        .send(
+          "Requested sheet doesn't exist or don't have permission to read it.",
+        );
     }
-
-    const sheet = { id: req.params.sheetId, rows: [] };
-
-    data.forEach((cell, idx) => {
-      if (!sheet[row.row_id]) sheet.rows[row.row_id] = {};
-
-      sheet[row.row_id][row.col_id] = {
-        value: row.cell_value,
-        //row: row.row_id,
-        col: row.col_id,
-        //sheet_id: row.sheet_id,
-        isDirty: false,
-      };
-    });
-
-    console.log(sheet);
-    res.json(sheet);
   });
+
+  //const sheet_meta = createSheetMeta(sheetData);
+
+  const cells = cellData.map((cell) => {
+    return {
+      cell_value: cell.display_val,
+      old_value: cell.display_val,
+      row_index: Number(cell.row_index),
+      col_index: cell.col_index,
+      sheet_id: Number(cell.sheet_id),
+      data_type: cell.data_type,
+      isDirty: false,
+    };
+  });
+
+  // console.log("sheet and cells ok");
+  // console.log(sheet_meta);
+  return res.status(200).json(cells);
 });
 
 app.get("/api/db", async (req, res) => {
   console.log("read sheets request recieved");
-  const sheets = await withTransaction(res, async (conn) => {
-    const dbRows = await conn.execute(queries.readSheets, req.session.user_id);
-
-    return dbRows.reduce((acc, row) => {
-      let sheet = acc.find((s) => s.id == row.sheet_id);
-
-      if (!sheet) {
-        sheet = {
-          id: Number(row.sheet_id),
-          name: row.sheet_name,
-          index: null,
-          permission: row.permission,
-          visibility: row.visibility,
-          isDirty: false,
-          cols: []
-        };
-        acc.push(sheet);
-      }
-
-      sheet.cols.push({
-        name: row.column_name,
-        col_index: row.column_index,
-        data_type: row.data_type,
-        isDirty: false,
-        isNew: false,
-      })
-
-      return acc;
-    }, []);
-
+  const dbRows = await withTransaction(res, async (conn) => {
+    return await conn.execute(queries.readSheets, req.session.user_id);
   });
+
+  const sheets = createSheetMeta(dbRows);
 
   res.json(sheets); // This is the response.data Pinia receives
 });
@@ -258,7 +247,9 @@ app.post("/api/cells/saveCells", async (req, res) => {
     console.log(sheet_meta.cols);
 
     withTransaction(res, async (conn) => {
-      if (!sheet_meta.id) {
+      let hasPermission = false;
+
+      if (!Number.isInteger(sheet_meta.id)) {
         const rows = await conn.execute(queries.insertSheet, [
           sheet_meta.name,
           sheet_meta.visibility,
@@ -273,30 +264,27 @@ app.post("/api/cells/saveCells", async (req, res) => {
         ]);
 
         sheet_meta.id = id;
+
+        hasPermission = true;
       } else if (sheet_meta.isDirty) {
-        await conn.execute(queries.updateSheet, [
-          sheet_meta.name,
-          sheet_meta.visibility,
+        hasPermission = conn.execute(queries.checkSheetWritePermission, [
           sheet_meta.id,
           req.session.user_id,
         ]);
-      }
 
-      const hasPermission = conn.execute(queries.checkSheetWritePermission, [
-        sheet_meta.id,
-        req.session.user_id,
-      ]);
+        if (hasPermission) {
+          await conn.execute(queries.updateSheet, [
+            sheet_meta.name,
+            sheet_meta.visibility,
+            sheet_meta.id,
+            req.session.user_id,
+          ]);
+        }
+      }
 
       if (hasPermission && sheet_meta.cols.length > 0) {
         const colValues = sheet_meta.cols.map((col) => {
-          return [
-            sheet_meta.id,
-            col.col_index,
-            col.name,
-            col.data_type,
-            // req.session.user_id,
-            // sheet_meta.id,
-          ];
+          return [sheet_meta.id, col.col_index, col.name, col.data_type];
         });
 
         await conn.batch(queries.upsertSheetCols, colValues);
@@ -376,9 +364,7 @@ app.post("/api/cells/saveCells", async (req, res) => {
 });
 
 app.post("/api/deleteSheet", async (req, res) => {
-
   try {
-
     let { sheet_id } = req.body;
 
     sheet_id = Number(sheet_id);
@@ -390,7 +376,6 @@ app.post("/api/deleteSheet", async (req, res) => {
     withTransaction(res, async (conn) => {
       await conn.execute(queries.deleteSheet, [sheet_id]);
     });
-
   } catch (ex) {
     console.log(ex);
     return res.status(500).send("Error processing the request");

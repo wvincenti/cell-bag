@@ -1,18 +1,17 @@
 SELECT 
-	sheet.name
-	,col.name
-	,col.index
-	,cell.row_index
-	,cell.col_index
-	,cell.display_val
-
-FROM users_sheets u_s
-	INNER JOIN sheets sheet ON (sheet.id = u_s.sheet_id)
-	INNER JOIN cols col ON (col.index = sheet.col_index)
-	INNER JOIN cells cell ON (cell.col_index = col.index)
+    c.sheet_id
+	,c.row_index
+	,c.col_index
+	,c.display_val
+    ,cv.data_type
+FROM cells c
+    INNER JOIN cell_values cv 
+        ON cv.sheet_id = c.sheet_id 
+        AND cv.col_index = c.col_index
+        AND cv.row_index = c.row_index
 WHERE 
-	cell.sheet_id = ? 
-	AND u_s.sheet_id = ?
+	c.sheet_id = ?
 ORDER BY
-	cell.row_id
-	,cell.col_index
+    c.sheet_id
+	,c.row_index
+	,c.col_index
