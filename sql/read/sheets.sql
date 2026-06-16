@@ -8,8 +8,8 @@ SELECT
     ,cols.data_type
     ,us.permission
 FROM sheets
-    INNER JOIN sheet_cols cols ON cols.sheet_id = sheets.id
     INNER JOIN users_sheets us ON us.sheet_id = sheets.id
+    LEFT JOIN sheet_cols cols ON cols.sheet_id = sheets.id
 WHERE 
     user_id = ? 
 ORDER BY

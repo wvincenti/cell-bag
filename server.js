@@ -90,6 +90,7 @@ app.get("/api/session", (req, res) => {
   }
 });
 
+//#region READ CELLS
 // GET: Fetch all cells for a specific sheet
 app.get("/api/cells/:sheetId", async (req, res) => {
   console.log("request recieved");
@@ -117,34 +118,69 @@ app.get("/api/cells/:sheetId", async (req, res) => {
 
   //const sheet_meta = createSheetMeta(sheetData);
 
-  const cells = cellData.map((cell) => {
-    return {
-      cell_value: cell.display_val,
-      old_value: cell.display_val,
-      row_index: Number(cell.row_index),
-      col_index: cell.col_index,
-      sheet_id: Number(cell.sheet_id),
-      data_type: cell.data_type,
-      isDirty: false,
-    };
-  });
+  // const cells = cellData.map((cell) => {
+  //   return {
+  //     cell_value: cell.display_val,
+  //     old_value: cell.display_val,
+  //     row_index: Number(cell.row_index),
+  //     col_index: cell.col_index,
+  //     sheet_id: Number(cell.sheet_id),
+  //     data_type: cell.data_type,
+  //     isDirty: false,
+  //   };
+  // });
 
   // console.log("sheet and cells ok");
   // console.log(sheet_meta);
-  return res.status(200).json(cells);
+  return res.status(200).json(cellData);
 });
+//#endregion
 
+//#region SHEET SCHEMA
 app.get("/api/db", async (req, res) => {
   console.log("read sheets request recieved");
   const dbRows = await withTransaction(res, async (conn) => {
-    return await conn.execute(queries.readSheets, req.session.user_id);
+    //return
+    const sheetData = await conn.execute(
+      queries.readSheets,
+      req.session.user_id,
+    );
+
+
+    const connectionData = await conn.execute(
+      queries.readSheetConnections,
+      req.session.user_id,
+    );
+
+    console.log("SHEET DATA ****");
+    console.log(sheetData);
+
+    return { connectionData, sheetData };
   });
 
-  const sheets = createSheetMeta(dbRows);
+  const sheets = createSheetMeta(dbRows.sheetData);
+  console.log('CONNECTION DATA')
+  console.log(dbRows.connectionData);
+
+
+  // update using a map containing a set
+  sheets.forEach((sheet) => {
+    dbRows.connectionData.forEach((connection) => {
+      if (sheet.id == connection.sheet_a) {
+        sheet.linked_sheet_ids.push(connection.sheet_b);
+      } else if (sheet.id == connection.sheet_b) {
+        sheet.linked_sheet_ids.push(connection.sheet_a);
+      }
+    });
+  });
+
+  console.log(sheets)
 
   res.json(sheets); // This is the response.data Pinia receives
 });
+//#endregion
 
+//#region SIGNING USER
 // ** SIGN UP **
 app.post("/api/register", async (req, res) => {
   try {
@@ -235,7 +271,9 @@ app.get("/api/logout", (req, res) => {
     return res.status(200).send("OK");
   });
 });
+//#endregion
 
+//#region SAVE CELLS
 // POST: Update or Insert a cell
 app.post("/api/cells/saveCells", async (req, res) => {
   try {
@@ -249,6 +287,7 @@ app.post("/api/cells/saveCells", async (req, res) => {
     withTransaction(res, async (conn) => {
       let hasPermission = false;
 
+      // checks if sheet is new or existing
       if (!Number.isInteger(sheet_meta.id)) {
         const rows = await conn.execute(queries.insertSheet, [
           sheet_meta.name,
@@ -355,6 +394,30 @@ app.post("/api/cells/saveCells", async (req, res) => {
         await conn.execute(queries.deleteEmptyCols, [sheet_meta.id]);
       }
 
+      if (hasPermission && sheet_meta.linked_sheet_ids.length > 0) {
+        const links = sheet_meta.linked_sheet_ids.map((linkedId) => {
+          if (sheet_meta.id != linkedId) {
+            return sheet_meta.id < linkedId
+              ? [sheet_meta.id, linkedId]
+              : [linkedId, sheet_meta.id];
+          }
+        });
+
+        await conn.batch(queries.insertIgnoreSheetConnections, links)
+      }
+
+      if (hasPermission && sheet_meta?.deleted_links?.length > 0) {
+        const links = sheet_meta.delete_links.map((linkedId) => {
+          if (sheet_meta.id != linkedId) {
+            return sheet_meta.id < linkedId
+              ? [sheet_meta.id, linkedId]
+              : [linkedId, sheet_meta.id];
+          }
+        });
+
+        await conn.batch(queries.deleteSheetConnections, links);
+      }
+
       return res.status(200).send(Number(sheet_meta.id));
     });
   } catch (ex) {
@@ -362,7 +425,9 @@ app.post("/api/cells/saveCells", async (req, res) => {
     return res.status(500).send("Error processing the request");
   }
 });
+//#endregion
 
+//#region DELETE CELLS
 app.post("/api/deleteSheet", async (req, res) => {
   try {
     let { sheet_id } = req.body;
@@ -376,11 +441,14 @@ app.post("/api/deleteSheet", async (req, res) => {
     withTransaction(res, async (conn) => {
       await conn.execute(queries.deleteSheet, [sheet_id]);
     });
+
+    res.status(200).send(`Sheet ${sheet_id} deleted`)
   } catch (ex) {
     console.log(ex);
     return res.status(500).send("Error processing the request");
   }
 });
+//#endregion
 
 app.post("/api/updateName", async (req, res) => {
   console.log("updating name");

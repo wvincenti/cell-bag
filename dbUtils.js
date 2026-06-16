@@ -16,6 +16,7 @@ const pool = mariadb.createPool({
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
   connectionLimit: 5,
+  bigIntAsNumber: true,
 });
 
 const queries = {
@@ -31,11 +32,14 @@ const queries = {
     "sql/read",
     "check_sheet_read_permission.sql",
   ),
+  readSheetConnections: readQuery("sql/read","sheet_connections.sql"),
+  
 
   // WRITE
   insertSheet: readQuery("sql/write", "insert_sheet.sql"),
   upsertSheetCols: readQuery("sql/write", "upsert_sheet_cols.sql"),
   insertIgnoreSheetRows: readQuery("sql/write", "insertignore_sheet_rows.sql"),
+  insertIgnoreSheetConnections: readQuery("sql/write", "insertignore_sheet_connections.sql"),
 
   upsertUserSheet: readQuery("sql/write", "upsert_user_sheet.sql"),
   upsertCells: readQuery("sql/write", "upsert_cells.sql"),
@@ -49,6 +53,7 @@ const queries = {
   deleteEmptyRows: readQuery("sql/delete", "delete_empty_rows.sql"),
   deleteEmptyCols: readQuery("sql/delete", "delete_empty_cols.sql"),
   deleteSheet: readQuery("sql/delete", "delete_sheet.sql"),
+  deleteSheetConnections: readQuery("sql/delete", "delete_sheet_connections.sql")
 };
 
 module.exports = {
@@ -107,20 +112,27 @@ module.exports = {
         sheet = {
           id: Number(row.sheet_id),
           name: row.sheet_name,
-          index: null,
+          old_name: row.sheet_name,
           permission: row.permission,
+          old_permission: row.permission,
           visibility: row.visibility,
+          old_visibility: row.visibility,
           updated_at: row.updated_at,
           isDirty: false,
           cols: [],
+          linked_sheet_ids: [],
         };
         acc.push(sheet);
       }
 
       sheet.cols.push({
         name: row.column_name,
+        old_name: row.column_name,
         col_index: row.column_index,
+        old_col_index: row.column_index,
         data_type: row.data_type,
+        old_data_type: row.data_type,
+        // sheet_id: Number(row.sheet_id),
         isDirty: false,
         isNew: false,
       });
