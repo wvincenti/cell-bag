@@ -107,6 +107,15 @@ app.get("/api/cells/:sheetId", async (req, res) => {
     if (hasPermission) {
       //sheetData = await conn.execute(queries.readUserSheet, req.params.sheetId);
       cellData = await conn.execute(queries.readCells, req.params.sheetId);
+
+      cellData = cellData.reduce((acc, current) => {
+        
+        if (!acc[current.row_index]) acc[current.row_index] = {}
+
+        acc[current.row_index][current.col_index] = current;
+
+        return acc
+      }, {})
     } else {
       return res
         .staus(403)
