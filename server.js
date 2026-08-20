@@ -95,7 +95,7 @@ app.get("/api/session", (req, res) => {
 app.get("/api/cells/:sheetId", async (req, res) => {
   console.log("request recieved");
 
-  let sheetData;
+  //let sheetData;
   let cellData;
 
   await withTransaction(res, async (conn) => {
@@ -108,14 +108,14 @@ app.get("/api/cells/:sheetId", async (req, res) => {
       //sheetData = await conn.execute(queries.readUserSheet, req.params.sheetId);
       cellData = await conn.execute(queries.readCells, req.params.sheetId);
 
-      cellData = cellData.reduce((acc, current) => {
-        
-        if (!acc[current.row_index]) acc[current.row_index] = {}
+      // cellData = cellData.reduce((acc, current) => {
 
-        acc[current.row_index][current.col_index] = current;
+      //   if (!acc[current.row_index]) acc[current.row_index] = {}
 
-        return acc
-      }, {})
+      //   acc[current.row_index][current.col_index] = current;
+
+      //   return acc
+      // }, {})
     } else {
       return res
         .staus(403)
@@ -155,7 +155,6 @@ app.get("/api/db", async (req, res) => {
       req.session.user_id,
     );
 
-
     const connectionData = await conn.execute(
       queries.readSheetConnections,
       req.session.user_id,
@@ -168,9 +167,8 @@ app.get("/api/db", async (req, res) => {
   });
 
   const sheets = createSheetMeta(dbRows.sheetData);
-  console.log('CONNECTION DATA')
+  console.log("CONNECTION DATA");
   console.log(dbRows.connectionData);
-
 
   // update using a map containing a set
   sheets.forEach((sheet) => {
@@ -183,7 +181,7 @@ app.get("/api/db", async (req, res) => {
     });
   });
 
-  console.log(sheets)
+  console.log(sheets);
 
   res.json(sheets); // This is the response.data Pinia receives
 });
@@ -293,6 +291,8 @@ app.post("/api/cells/saveCells", async (req, res) => {
     console.log(cells);
     console.log(sheet_meta.cols);
 
+    // const sheetRows = [...req.body.rows];
+
     withTransaction(res, async (conn) => {
       let hasPermission = false;
 
@@ -337,8 +337,8 @@ app.post("/api/cells/saveCells", async (req, res) => {
 
         await conn.batch(queries.upsertSheetCols, colValues);
       }
-
-      if (hasPermission && sheet_meta.rows.length > 0) {
+      console.log(sheet_meta.rows);
+      if (hasPermission && [...sheet_meta?.rows].length > 0) {
         const rowValues = sheet_meta.rows.map((rowIdx) => {
           return [sheet_meta.id, rowIdx];
         });
@@ -412,7 +412,7 @@ app.post("/api/cells/saveCells", async (req, res) => {
           }
         });
 
-        await conn.batch(queries.insertIgnoreSheetConnections, links)
+        await conn.batch(queries.insertIgnoreSheetConnections, links);
       }
 
       if (hasPermission && sheet_meta?.deleted_links?.length > 0) {
@@ -451,7 +451,7 @@ app.post("/api/deleteSheet", async (req, res) => {
       await conn.execute(queries.deleteSheet, [sheet_id]);
     });
 
-    res.status(200).send(`Sheet ${sheet_id} deleted`)
+    res.status(200).send(`Sheet ${sheet_id} deleted`);
   } catch (ex) {
     console.log(ex);
     return res.status(500).send("Error processing the request");
